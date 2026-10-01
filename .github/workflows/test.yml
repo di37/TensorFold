@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, "ci/**"]   # TEMP: test on the fork; dropped before the PR
   pull_request:
   workflow_dispatch:
 
