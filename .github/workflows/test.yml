@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS (Apple silicon, MLX)
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TENSORFOLD_NO_UPDATE_CHECK: "1"   # no release check against GitHub from the tests
+      HF_HUB_OFFLINE: "1"               # the suite builds its checkpoints; nothing is downloaded
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[test]' jinja2 tokenizers ruff
+      - name: Device
+        run: |
+          python - <<'EOF'
+          import platform
+          import mlx.core as mx
+          print(platform.machine(), platform.mac_ver()[0], "mlx", mx.__version__, "metal", mx.metal.is_available())
+          if mx.metal.is_available():
+              print(mx.device_info())
+          EOF
+      - name: Lint (syntax errors and undefined names)
+        run: ruff check src tests --select E9,F63,F7,F82
+      - name: Tests (CUDA ones excluded)
+        run: python -m pytest -q --ignore=tests/cuda -p no:cacheprovider --durations=15
