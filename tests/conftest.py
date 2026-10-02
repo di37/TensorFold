@@ -43,3 +43,34 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if item.path.name in TENSOR_UNIT_TESTS:
             item.add_marker(skip)
+
+
+# MLX names the pipeline's limit when a launch passes it (M1/M2, a macOS VM's paravirtual GPU)
+_THREADGROUP_LIMIT = "maximum allowed threads per threadgroup"
+# M5 tensor-unit kernels include this header, which macOS 26 brings (CI runners and older Macs lack it)
+_NO_TENSOR_HEADERS = "MetalPerformancePrimitives/MetalPerformancePrimitives.h' file not found"
+
+
+def _environment_skip(item: pytest.Item, error: BaseException) -> str | None:
+    """Why ``error`` is this machine's, not the code's: GLM's 1024-thread kernels where pipelines may take fewer, or
+    tensor-unit kernels built on a macOS without their header. Elsewhere the error stays a failure."""
+
+    text = str(error)
+    if isinstance(error, RuntimeError) and _NO_TENSOR_HEADERS in text:
+        return "tensor-unit kernels need macOS 26's MetalPerformancePrimitives"
+    if isinstance(error, ValueError) and _THREADGROUP_LIMIT in text and "glm" in item.nodeid.lower():
+        from tensorfold.kernels import threads
+
+        if threads.probing:
+            return (f"GLM-5.3-Flash serves on 256 GB Macs (M3 Ultra and later), whose pipelines take 1024 threads; "
+                    f"{threads.chip()} took fewer")
+    return None
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item: pytest.Item):
+    outcome = yield
+    error = outcome.excinfo[1] if outcome.excinfo else None
+    reason = None if error is None else _environment_skip(item, error)
+    if reason is not None:
+        outcome.force_exception(pytest.skip.Exception(reason))
